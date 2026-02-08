@@ -11,31 +11,31 @@ import {
 import { formatCurrency } from './utils'
 
 // ------------------------------
-// PostgreSQL connection
+// Build / Runtime guard
 // ------------------------------
-const sql = postgres(process.env.POSTGRES_URL ?? '', {
-  ssl: process.env.NODE_ENV === 'production' ? 'require' : false,
-  idle_timeout: 30,
-  connect_timeout: 30,
-  max_lifetime: 60,
-})
+const SKIP_DB = process.env.SKIP_DB === 'true'
 
 // ------------------------------
-// Test rapide de la connexion (optionnel)
+// PostgreSQL connection (SAFE)
 // ------------------------------
-;(async () => {
-  try {
-    const result = await sql`SELECT 1 AS test`
-    console.log('✅ PostgreSQL connecté :', result[0])
-  } catch (err) {
-    console.error('❌ Erreur de connexion PostgreSQL :', err)
-  }
-})()
+const sql = SKIP_DB
+  ? null
+  : postgres(process.env.POSTGRES_URL ?? '', {
+      ssl: 'require',
+      idle_timeout: 30,
+      connect_timeout: 30,
+      max_lifetime: 60,
+    })
+
+// ⚠️ SUPPRIMÉ : test automatique de connexion
+// (interdit pendant le build)
 
 // ------------------------------
 // Revenue
 // ------------------------------
 export async function fetchRevenue(): Promise<Revenue[]> {
+  if (SKIP_DB || !sql) return []
+
   try {
     return await sql<Revenue[]>`SELECT * FROM revenue`
   } catch (error) {
@@ -48,15 +48,16 @@ export async function fetchRevenue(): Promise<Revenue[]> {
 // Latest Invoices
 // ------------------------------
 export async function fetchLatestInvoices(): Promise<LatestInvoiceRaw[]> {
+  if (SKIP_DB || !sql) return []
+
   try {
-    const data = await sql<LatestInvoiceRaw[]>`
+    return await sql<LatestInvoiceRaw[]>`
       SELECT invoices.amount, customers.name, customers.image_url, customers.email, invoices.id
       FROM invoices
       JOIN customers ON invoices.customer_id = customers.id
       ORDER BY invoices.date DESC
       LIMIT 5
     `
-    return data // reste des numbers, formatCurrency dans React
   } catch (error) {
     console.error('DB error (latest invoices):', error)
     return []
@@ -67,6 +68,15 @@ export async function fetchLatestInvoices(): Promise<LatestInvoiceRaw[]> {
 // Dashboard cards
 // ------------------------------
 export async function fetchCardData() {
+  if (SKIP_DB || !sql) {
+    return {
+      numberOfInvoices: 0,
+      numberOfCustomers: 0,
+      totalPaidInvoices: 0,
+      totalPendingInvoices: 0,
+    }
+  }
+
   try {
     const [invoices, customers, status] = await Promise.all([
       sql`SELECT COUNT(*) AS count FROM invoices`,
@@ -105,6 +115,8 @@ export async function fetchFilteredInvoices(
   query: string,
   currentPage: number
 ): Promise<InvoicesTable[]> {
+  if (SKIP_DB || !sql) return []
+
   const offset = (currentPage - 1) * ITEMS_PER_PAGE
 
   try {
@@ -135,6 +147,8 @@ export async function fetchFilteredInvoices(
 }
 
 export async function fetchInvoicesPages(query: string): Promise<number> {
+  if (SKIP_DB || !sql) return 0
+
   try {
     const data = await sql`
       SELECT COUNT(*) AS count
@@ -155,6 +169,8 @@ export async function fetchInvoicesPages(query: string): Promise<number> {
 }
 
 export async function fetchInvoiceById(id: string): Promise<InvoiceForm | null> {
+  if (SKIP_DB || !sql) return null
+
   try {
     const data = await sql<InvoiceForm[]>`
       SELECT id, customer_id, amount, status
@@ -172,6 +188,8 @@ export async function fetchInvoiceById(id: string): Promise<InvoiceForm | null> 
 // Customers
 // ------------------------------
 export async function fetchCustomers(): Promise<CustomerField[]> {
+  if (SKIP_DB || !sql) return []
+
   try {
     return await sql<CustomerField[]>`
       SELECT id, name
@@ -187,6 +205,8 @@ export async function fetchCustomers(): Promise<CustomerField[]> {
 export async function fetchFilteredCustomers(
   query: string
 ): Promise<CustomersTableType[]> {
+  if (SKIP_DB || !sql) return []
+
   try {
     const data = await sql<CustomersTableType[]>`
       SELECT
@@ -205,7 +225,7 @@ export async function fetchFilteredCustomers(
       GROUP BY customers.id, customers.name, customers.email, customers.image_url
       ORDER BY customers.name ASC
     `
-    return data.map((customer: CustomersTableType) => ({
+    return data.map((customer) => ({
       ...customer,
       total_pending: Number(customer.total_pending ?? 0),
       total_paid: Number(customer.total_paid ?? 0),
